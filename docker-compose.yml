@@ -1,19 +1,17 @@
-version: '3'
+version: '3.5'
 
 services:
   otrs:
     image: juanluisbaptiste/otrs:latest
     build: otrs
-    ports:
-      - '80:80'
-    # If running behind a proxy container, expose the ports instead
-    # and link the proxy container to this one.
-    #  expose:
-    #  - "80"
+    expose:
+      - "80"
     depends_on:
       - mariadb
-      - postfix
+      - mailhog
     env_file: .env
+    networks:
+      - internal
     volumes:
       - './volumes/config:/opt/otrs/Kernel'
       # Uncomment if using OTRS_ARTICLE_STORAGE_TYPE=ArticleStorageFS
@@ -23,19 +21,56 @@ services:
       - './volumes/addons:/opt/otrs/addons'
       - ./volumes/db_upgrade:/opt/otrs/db_upgrade
       - '/etc/localtime:/etc/localtime:ro'
+    labels:
+      - "traefik.docker.network=web"
+      - "traefik.enable=true"
+      - "traefik.http.routers.otrs.rule=Host(`$OTRS_DOMAIN`)"
+
   mariadb:
     image: juanluisbaptiste/otrs-mariadb:latest
     build: mariadb
     expose:
       - "3306"
     env_file: .env
+    networks:
+      - internal
     volumes:
       - './volumes/mysql:/var/lib/mysql'
       - '/etc/localtime:/etc/localtime:ro'
-  postfix:
-    image: juanluisbaptiste/postfix:latest
+
+  reverse-proxy:
+    image: "traefik:v2.3"
+    container_name: "proxy"
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8080:8080"
+    networks:
+      - web
+      - internal
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  mailhog:
+    image: mailhog/mailhog
+    networks:
+      - internal
     expose:
-      - '25'
-    # See juanluisbaptiste/postfix github page for the contents
-    # and an explanation of credentials-smtp.
+      - '8025'
+      - '1025'
     env_file: .env
+    labels:
+      - "traefik.docker.network=internal"
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailhog.rule=Host(`$MAILHOG_DOMAIN`)"
+      - "traefik.http.services.mailhog.loadbalancer.server.port=8025"
+
+networks:
+  internal:
+    name: internal
+  web:
+    name: web
